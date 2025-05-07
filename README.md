@@ -5,7 +5,7 @@ A JavaScript SDK for integrating Layercode voice pipelines into web applications
 ## Installation
 
 ```bash
-npm install layercode-js-sdk
+npm install @layercode/js-sdk
 ```
 
 Or you can use a script tag in your HTML:
