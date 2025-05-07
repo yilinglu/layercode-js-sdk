@@ -1,0 +1,46 @@
+{
+  "author": "Layercode",
+  "license": "MIT",
+  "name": "@layercode/js-sdk",
+  "version": "1.0.9",
+  "description": "Layercode JavaScript SDK for browser usage",
+  "type": "module",
+  "main": "dist/layercode-js-sdk.esm.js",
+  "module": "dist/layercode-js-sdk.esm.js",
+  "browser": "dist/layercode-js-sdk.min.js",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/layercode-js-sdk.esm.js",
+      "require": "./dist/layercode-js-sdk.min.js",
+      "types": "./dist/types/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "clean": "rimraf dist",
+    "prebuild": "npm run clean"
+  },
+  "keywords": [
+    "layercode",
+    "audio",
+    "sdk",
+    "browser"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "rimraf": "^6.0.1",
+    "rollup": "^4.0.0",
+    "tslib": "^2.5.0",
+    "typescript": "^5.8.2"
+  }
+}
