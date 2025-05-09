@@ -150,6 +150,14 @@ export class WavRecorder {
   }
 
   /**
+   * Get the MediaStream instance
+   * @returns {MediaStream|null} The audio stream or null if not initialized
+   */
+  getStream() {
+    return this.stream;
+  }
+
+  /**
    * Retrieves the current status of the recording
    * @returns {"ended"|"paused"|"recording"}
    */
@@ -312,9 +320,17 @@ export class WavRecorder {
       throw new Error('Could not request user media');
     }
     try {
-      const config = { audio: true };
+      // Use sensible getUserMedia audio options to improve voice quality
+      const config = {
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          autoGainControl: true,
+          noiseSuppression: true,
+        }
+      };
       if (deviceId) {
-        config.audio = { deviceId: { exact: deviceId } };
+        config.audio.deviceId = { exact: deviceId };
       }
       this.stream = await navigator.mediaDevices.getUserMedia(config);
     } catch (err) {
@@ -440,7 +456,7 @@ export class WavRecorder {
       requestAnimationFrame(monitor);
     };
     monitor();
-  }  
+  }
 
   /**
    * Pauses the recording

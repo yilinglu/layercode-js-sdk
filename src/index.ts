@@ -1,5 +1,6 @@
 /* eslint-env browser */
 import { WavRecorder, WavStreamPlayer } from './wavtools/index.js';
+import { MicVAD } from '@ricky0123/vad-web';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from './utils.js';
 import {
   LayercodeMessage,
@@ -25,6 +26,10 @@ interface LayercodeClientOptions {
   authorizeSessionEndpoint: string;
   /** Metadata to send with webhooks */
   metadata?: Record<string, any>;
+  /** Enable/disable voice activity detector (VAD) which improves turn taking */
+  vadEnabled?: boolean;
+  /** Milliseconds before resuming assistant audio after temporary pause due to user interruption (which was actually a false interruption) */
+  vadResumeDelay?: number;
   /** Callback when connection is established */
   onConnect?: ({ sessionId }: { sessionId: string | null }) => void;
   /** Callback when connection is closed */
@@ -49,9 +54,11 @@ class LayercodeClient {
   private options: Required<LayercodeClientOptions>;
   private wavRecorder: WavRecorder;
   private wavPlayer: WavStreamPlayer;
+  private vad: MicVAD | null;
   private ws: WebSocket | null;
   private AMPLITUDE_MONITORING_SAMPLE_RATE: number;
   private pushToTalkActive: boolean;
+  private vadPausedPlayer: boolean; // Flag to track if VAD paused the player
   _websocketUrl: string;
   status: string;
   userAudioAmplitude: number;
@@ -68,6 +75,8 @@ class LayercodeClient {
       sessionId: options.sessionId || null,
       authorizeSessionEndpoint: options.authorizeSessionEndpoint,
       metadata: options.metadata || {},
+      vadEnabled: options.vadEnabled || true,
+      vadResumeDelay: options.vadResumeDelay || 500,
       onConnect: options.onConnect || (() => {}),
       onDisconnect: options.onDisconnect || (() => {}),
       onError: options.onError || (() => {}),
@@ -85,6 +94,65 @@ class LayercodeClient {
       finishedPlayingCallback: this._clientResponseAudioReplayFinished.bind(this),
       sampleRate: 16000, // TODO should be set my fetched pipeline config
     });
+    this.vad = null;
+    if (this.options.vadEnabled) {
+      MicVAD.new({
+        stream: this.wavRecorder.getStream() || undefined,
+        model: 'v5',
+        // baseAssetPath: '/', // Use if bundling model locally
+        // onnxWASMBasePath: '/', // Use if bundling model locally
+        positiveSpeechThreshold: 0.3,
+        negativeSpeechThreshold: 0.2,
+        redemptionFrames: 25, // Number of frames of silence before onVADMisfire or onSpeechEnd is called. Effectively a delay before restarting.
+        minSpeechFrames: 15,
+        preSpeechPadFrames: 0,
+        onSpeechStart: () => {
+          // Only pause agent audio if it's currently playing
+          if (this.wavPlayer.isPlaying) {
+            console.log('onSpeechStart: WavPlayer is playing, pausing it.');
+            this.wavPlayer.pause();
+            this.vadPausedPlayer = true; // VAD is responsible for this pause
+          } else {
+            console.log('onSpeechStart: WavPlayer is not playing, VAD will not pause.');
+          }
+        },
+        onVADMisfire: () => {
+          // If the speech detected was for less than minSpeechFrames, this is called instead of onSpeechEnd, and we should resume the assistant audio as it was a false interruption. We include a configurable delay so the assistant isn't too quick to start speaking again.
+          if (this.vadPausedPlayer) {
+            console.log('onSpeechEnd: VAD paused the player, resuming');
+            this.wavPlayer.play();
+            this.vadPausedPlayer = false; // Reset flag
+
+            // Option to extend delay in the case where the transcriber takes longer to detect a new turn
+            // console.log('onVADMisfire: VAD paused the player, resuming in ' + this.options.vadResumeDelay + 'ms');
+            // // Add configurable delay before resuming playback
+            // setTimeout(() => {
+            //   this.wavPlayer.play();
+            //   this.vadPausedPlayer = false; // Reset flag
+            // }, this.options.vadResumeDelay);
+          } else {
+            console.log('onVADMisfire: VAD did not pause the player, no action taken to resume.');
+          }
+        },
+        // onSpeechEnd: () => {
+        //   if (this.vadPausedPlayer) {
+        //     console.log('onSpeechEnd: VAD paused the player, resuming');
+        //     this.wavPlayer.play();
+        //     this.vadPausedPlayer = false; // Reset flag
+        //   } else {
+        //     console.log('onSpeechEnd: VAD did not pause the player, not resuming.');
+        //   }
+        // },
+      })
+        .then((vad) => {
+          this.vad = vad;
+          this.vad.start();
+          console.log('VAD started');
+        })
+        .catch((error) => {
+          console.error('Error initializing VAD:', error);
+        });
+    }
 
     this.ws = null;
     this.status = 'disconnected';
@@ -92,6 +160,7 @@ class LayercodeClient {
     this.agentAudioAmplitude = 0;
     this.sessionId = options.sessionId || null;
     this.pushToTalkActive = false;
+    this.vadPausedPlayer = false;
 
     // Bind event handlers
     this._handleWebSocketMessage = this._handleWebSocketMessage.bind(this);
@@ -168,6 +237,11 @@ class LayercodeClient {
             console.log('interrupting assistant audio, as user turn has started and pushToTalkActive is false');
             await this._clientInterruptAssistantReplay();
           }
+          // if (message.role === 'assistant') {
+          //   // Clear the buffer of audio when the assisatnt starts a new turn, as it may have been paused previously by VAD, leaving some audio frames in the buffer.
+          //   console.log('Clearing audio buffer as assistant turn has started');
+          //   await this._clientInterruptAssistantReplay();
+          // }
           break;
 
         case 'response.audio':
@@ -325,6 +399,14 @@ class LayercodeClient {
     this.wavRecorder.quit();
     this.wavPlayer.disconnect();
     this.ws?.close();
+  }
+
+  /**
+   * Gets the microphone MediaStream used by this client
+   * @returns {MediaStream|null} The microphone stream or null if not initialized
+   */
+  getStream(): MediaStream | null {
+    return this.wavRecorder.getStream();
   }
 }
 
