@@ -4,6 +4,14 @@ import { MicVAD } from '@ricky0123/vad-web';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from './utils.js';
 import { ClientMessage, ServerMessage, ClientAudioMessage, ClientTriggerTurnMessage, ClientTriggerResponseAudioReplayFinishedMessage } from './interfaces.js';
 
+interface PipelineConfig {
+  transcription: {
+    trigger: 'push_to_talk' | 'automatic';
+    can_interrupt: boolean;
+    automatic: boolean;
+  };
+}
+
 /**
  * Interface for LayercodeClient constructor options
  */
@@ -352,15 +360,15 @@ class LayercodeClient {
           client_session_key: authorizeSessionResponseBody.client_session_key,
         })}`
       );
-      const config = authorizeSessionResponseBody.config;
+      const config: PipelineConfig = authorizeSessionResponseBody.config;
       console.log('config', config);
-      if (config.turn_taking_mode === 'push_to_talk') {
+      if (config.transcription.trigger === 'push_to_talk') {
         this.pushToTalkEnabled = true;
-      } else if (config.turn_taking_mode === 'automatic') {
+      } else if (config.transcription.trigger === 'automatic') {
         this.pushToTalkEnabled = false;
-        this.canInterrupt = config.can_interrupt;
+        this.canInterrupt = config.transcription.can_interrupt;
       } else {
-        throw new Error(`Unknown turn_taking_mode: ${config.turn_taking_mode}`);
+        throw new Error(`Unknown trigger: ${config.transcription.trigger}`);
       }
       this._initializeVAD();
 
