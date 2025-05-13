@@ -2,17 +2,7 @@
 import { WavRecorder, WavStreamPlayer } from './wavtools/index.js';
 import { MicVAD } from '@ricky0123/vad-web';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from './utils.js';
-import {
-  LayercodeMessage,
-  ClientMessage,
-  ServerMessage,
-  ClientAudioMessage,
-  ClientTriggerTurnMessage,
-  ClientTriggerResponseAudioReplayFinishedMessage,
-  ServerTurnMessage,
-  ServerResponseAudioMessage,
-  ServerResponseDataMessage,
-} from './interfaces.js';
+import { ClientMessage, ServerMessage, ClientAudioMessage, ClientTriggerTurnMessage, ClientTriggerResponseAudioReplayFinishedMessage } from './interfaces.js';
 
 /**
  * Interface for LayercodeClient constructor options
@@ -26,8 +16,6 @@ interface LayercodeClientOptions {
   authorizeSessionEndpoint: string;
   /** Metadata to send with webhooks */
   metadata?: Record<string, any>;
-  /** Enable/disable voice activity detector (VAD) which improves turn taking */
-  vadEnabled?: boolean;
   /** Milliseconds before resuming assistant audio after temporary pause due to user interruption (which was actually a false interruption) */
   vadResumeDelay?: number;
   /** Callback when connection is established */
@@ -58,6 +46,8 @@ class LayercodeClient {
   private ws: WebSocket | null;
   private AMPLITUDE_MONITORING_SAMPLE_RATE: number;
   private pushToTalkActive: boolean;
+  private pushToTalkEnabled: boolean;
+  private canInterrupt: boolean;
   private vadPausedPlayer: boolean; // Flag to track if VAD paused the player
   _websocketUrl: string;
   status: string;
@@ -75,7 +65,6 @@ class LayercodeClient {
       sessionId: options.sessionId || null,
       authorizeSessionEndpoint: options.authorizeSessionEndpoint,
       metadata: options.metadata || {},
-      vadEnabled: options.vadEnabled || true,
       vadResumeDelay: options.vadResumeDelay || 500,
       onConnect: options.onConnect || (() => {}),
       onDisconnect: options.onDisconnect || (() => {}),
@@ -95,7 +84,24 @@ class LayercodeClient {
       sampleRate: 16000, // TODO should be set my fetched pipeline config
     });
     this.vad = null;
-    if (this.options.vadEnabled) {
+    this.ws = null;
+    this.status = 'disconnected';
+    this.userAudioAmplitude = 0;
+    this.agentAudioAmplitude = 0;
+    this.sessionId = options.sessionId || null;
+    this.pushToTalkActive = false;
+    this.vadPausedPlayer = false;
+    this.pushToTalkEnabled = false;
+    this.canInterrupt = false;
+
+    // Bind event handlers
+    this._handleWebSocketMessage = this._handleWebSocketMessage.bind(this);
+    this._handleDataAvailable = this._handleDataAvailable.bind(this);
+  }
+
+  private _initializeVAD(): void {
+    console.log('initializing VAD', { pushToTalkEnabled: this.pushToTalkEnabled, canInterrupt: this.canInterrupt });
+    if (!this.pushToTalkEnabled && this.canInterrupt) {
       MicVAD.new({
         stream: this.wavRecorder.getStream() || undefined,
         model: 'v5',
@@ -153,18 +159,6 @@ class LayercodeClient {
           console.error('Error initializing VAD:', error);
         });
     }
-
-    this.ws = null;
-    this.status = 'disconnected';
-    this.userAudioAmplitude = 0;
-    this.agentAudioAmplitude = 0;
-    this.sessionId = options.sessionId || null;
-    this.pushToTalkActive = false;
-    this.vadPausedPlayer = false;
-
-    // Bind event handlers
-    this._handleWebSocketMessage = this._handleWebSocketMessage.bind(this);
-    this._handleDataAvailable = this._handleDataAvailable.bind(this);
   }
 
   /**
@@ -231,10 +225,9 @@ class LayercodeClient {
           // Sent from the server to this client when a new user turn is detected
           console.log('received turn.start from server');
           console.log(message);
-          // if (message.role === 'user' && !this.pushToTalkActive) {
-          if (message.role === 'user') {
+          if (message.role === 'user' && !this.pushToTalkEnabled && this.canInterrupt) {
             // Interrupt any playing assistant audio if this is a turn trigged by the server (and not push to talk, which will have already called interrupt)
-            console.log('interrupting assistant audio, as user turn has started and pushToTalkActive is false');
+            console.log('interrupting assistant audio, as user turn has started and pushToTalkEnabled is false');
             await this._clientInterruptAssistantReplay();
           }
           // if (message.role === 'assistant') {
@@ -359,6 +352,18 @@ class LayercodeClient {
           client_session_key: authorizeSessionResponseBody.client_session_key,
         })}`
       );
+      const config = authorizeSessionResponseBody.config;
+      console.log('config', config);
+      if (config.turn_taking_mode === 'push_to_talk') {
+        this.pushToTalkEnabled = true;
+      } else if (config.turn_taking_mode === 'automatic') {
+        this.pushToTalkEnabled = false;
+        this.canInterrupt = config.can_interrupt;
+      } else {
+        throw new Error(`Unknown turn_taking_mode: ${config.turn_taking_mode}`);
+      }
+      this._initializeVAD();
+
       // Bind the websocket message callbacks
       this.ws.onmessage = this._handleWebSocketMessage;
       this.ws.onopen = () => {
