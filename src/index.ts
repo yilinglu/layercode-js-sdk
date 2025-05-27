@@ -2,7 +2,14 @@
 import { WavRecorder, WavStreamPlayer } from './wavtools/index.js';
 import { MicVAD } from '@ricky0123/vad-web';
 import { base64ToArrayBuffer, arrayBufferToBase64 } from './utils.js';
-import { ClientMessage, ServerMessage, ClientAudioMessage, ClientTriggerTurnMessage, ClientTriggerResponseAudioReplayFinishedMessage } from './interfaces.js';
+import {
+  ClientMessage,
+  ServerMessage,
+  ClientAudioMessage,
+  ClientTriggerTurnMessage,
+  ClientTriggerResponseAudioReplayFinishedMessage,
+  ClientVadEventsMessage,
+} from './interfaces.js';
 
 interface PipelineConfig {
   transcription: {
@@ -57,6 +64,7 @@ class LayercodeClient {
   private pushToTalkEnabled: boolean;
   private canInterrupt: boolean;
   private vadPausedPlayer: boolean; // Flag to track if VAD paused the player
+  private userIsSpeaking: boolean;
   _websocketUrl: string;
   status: string;
   userAudioAmplitude: number;
@@ -101,6 +109,7 @@ class LayercodeClient {
     this.vadPausedPlayer = false;
     this.pushToTalkEnabled = false;
     this.canInterrupt = false;
+    this.userIsSpeaking = false;
 
     // Bind event handlers
     this._handleWebSocketMessage = this._handleWebSocketMessage.bind(this);
@@ -109,7 +118,52 @@ class LayercodeClient {
 
   private _initializeVAD(): void {
     console.log('initializing VAD', { pushToTalkEnabled: this.pushToTalkEnabled, canInterrupt: this.canInterrupt });
-    if (!this.pushToTalkEnabled && this.canInterrupt) {
+
+    // If we're in push to talk mode, we don't need to use the VAD model
+    if (this.pushToTalkEnabled) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      console.log('silero vad model timeout');
+      // TODO: send message to server to indicate that the vad model timed out
+      this.userIsSpeaking = true; // allow audio to be sent to the server
+    }, 2000);
+    if (!this.canInterrupt) {
+      MicVAD.new({
+        stream: this.wavRecorder.getStream() || undefined,
+        model: 'v5',
+        positiveSpeechThreshold: 0.3,
+        negativeSpeechThreshold: 0.2,
+        redemptionFrames: 25, // Number of frames of silence before onVADMisfire or onSpeechEnd is called. Effectively a delay before restarting.
+        minSpeechFrames: 15,
+        preSpeechPadFrames: 0,
+        onSpeechStart: () => {
+          if (!this.wavPlayer.isPlaying) {
+            this.userIsSpeaking = true;
+          }
+        },
+        onVADMisfire: () => {
+          this.userIsSpeaking = false;
+        },
+        onSpeechEnd: () => {
+          this.userIsSpeaking = false;
+          this._wsSend({
+            type: 'vad_events',
+            event: 'vad_end',
+          } as ClientVadEventsMessage);
+        },
+      })
+        .then((vad) => {
+          clearTimeout(timeout);
+          this.vad = vad;
+          this.vad.start();
+          console.log('VAD started');
+        })
+        .catch((error) => {
+          console.error('Error initializing VAD:', error);
+        });
+    } else {
       MicVAD.new({
         stream: this.wavRecorder.getStream() || undefined,
         model: 'v5',
@@ -129,36 +183,34 @@ class LayercodeClient {
           } else {
             console.log('onSpeechStart: WavPlayer is not playing, VAD will not pause.');
           }
+          this.userIsSpeaking = true;
+          console.log('onSpeechStart: sending vad_start');
+          this._wsSend({
+            type: 'vad_events',
+            event: 'vad_start',
+          } as ClientVadEventsMessage);
         },
         onVADMisfire: () => {
           // If the speech detected was for less than minSpeechFrames, this is called instead of onSpeechEnd, and we should resume the assistant audio as it was a false interruption. We include a configurable delay so the assistant isn't too quick to start speaking again.
+          this.userIsSpeaking = false;
           if (this.vadPausedPlayer) {
             console.log('onSpeechEnd: VAD paused the player, resuming');
             this.wavPlayer.play();
             this.vadPausedPlayer = false; // Reset flag
-
-            // Option to extend delay in the case where the transcriber takes longer to detect a new turn
-            // console.log('onVADMisfire: VAD paused the player, resuming in ' + this.options.vadResumeDelay + 'ms');
-            // // Add configurable delay before resuming playback
-            // setTimeout(() => {
-            //   this.wavPlayer.play();
-            //   this.vadPausedPlayer = false; // Reset flag
-            // }, this.options.vadResumeDelay);
           } else {
             console.log('onVADMisfire: VAD did not pause the player, no action taken to resume.');
           }
         },
-        // onSpeechEnd: () => {
-        //   if (this.vadPausedPlayer) {
-        //     console.log('onSpeechEnd: VAD paused the player, resuming');
-        //     this.wavPlayer.play();
-        //     this.vadPausedPlayer = false; // Reset flag
-        //   } else {
-        //     console.log('onSpeechEnd: VAD did not pause the player, not resuming.');
-        //   }
-        // },
+        onSpeechEnd: () => {
+          this.userIsSpeaking = false;
+          this._wsSend({
+            type: 'vad_events',
+            event: 'vad_end',
+          } as ClientVadEventsMessage);
+        },
       })
         .then((vad) => {
+          clearTimeout(timeout);
           this.vad = vad;
           this.vad.start();
           console.log('VAD started');
@@ -277,10 +329,14 @@ class LayercodeClient {
   private _handleDataAvailable(data: { mono: Int16Array<ArrayBufferLike> }): void {
     try {
       const base64 = arrayBufferToBase64(data.mono);
-      this._wsSend({
-        type: 'client.audio',
-        content: base64,
-      } as ClientAudioMessage);
+      const sendAudio = this.pushToTalkEnabled ? this.pushToTalkActive : this.userIsSpeaking;
+
+      if (sendAudio) {
+        this._wsSend({
+          type: 'client.audio',
+          content: base64,
+        } as ClientAudioMessage);
+      }
     } catch (error) {
       console.error('Error processing audio:', error);
       this.options.onError(error instanceof Error ? error : new Error(String(error)));
