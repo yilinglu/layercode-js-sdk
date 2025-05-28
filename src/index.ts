@@ -448,7 +448,7 @@ class LayercodeClient {
 
       // Initialize microphone audio capture
       await this.wavRecorder.begin();
-      await this.wavRecorder.record(this._handleDataAvailable);
+      await this.wavRecorder.record(this._handleDataAvailable, 1638);
       // Set up microphone amplitude monitoring
       this._setupAmplitudeMonitoring(this.wavRecorder, this.options.onUserAmplitudeChange, (amp) => (this.userAudioAmplitude = amp));
 
