@@ -65,6 +65,8 @@ class LayercodeClient {
   private canInterrupt: boolean;
   private vadPausedPlayer: boolean; // Flag to track if VAD paused the player
   private userIsSpeaking: boolean;
+  private recorderStarted: boolean; // Indicates that WavRecorder.record() has been called successfully
+  private readySent: boolean; // Ensures we send client.ready only once
   _websocketUrl: string;
   status: string;
   userAudioAmplitude: number;
@@ -110,6 +112,8 @@ class LayercodeClient {
     this.pushToTalkEnabled = false;
     this.canInterrupt = false;
     this.userIsSpeaking = false;
+    this.recorderStarted = false;
+    this.readySent = false;
 
     // Bind event handlers
     this._handleWebSocketMessage = this._handleWebSocketMessage.bind(this);
@@ -355,6 +359,13 @@ class LayercodeClient {
     }
   }
 
+  private _sendReadyIfNeeded(): void {
+    if (this.recorderStarted && this.ws?.readyState === WebSocket.OPEN && !this.readySent) {
+      this._wsSend({ type: 'client.ready' } as ClientMessage);
+      this.readySent = true;
+    }
+  }
+
   /**
    * Sets up amplitude monitoring for a given audio source.
    * @param {WavRecorder | WavStreamPlayer} source - The audio source (recorder or player).
@@ -434,6 +445,9 @@ class LayercodeClient {
         console.log('WebSocket connection established');
         this._setStatus('connected');
         this.options.onConnect({ sessionId: this.sessionId });
+
+        // Attempt to send ready message if recorder already started
+        this._sendReadyIfNeeded();
       };
       this.ws.onclose = () => {
         console.log('WebSocket connection closed');
@@ -456,6 +470,10 @@ class LayercodeClient {
       await this.wavPlayer.connect();
       // Set up audio player amplitude monitoring
       this._setupAmplitudeMonitoring(this.wavPlayer, this.options.onAgentAmplitudeChange, (amp) => (this.agentAudioAmplitude = amp));
+
+      // Mark recorder as started and attempt to notify server
+      this.recorderStarted = true;
+      this._sendReadyIfNeeded();
     } catch (error) {
       console.error('Error connecting to Layercode pipeline:', error);
       this._setStatus('error');
