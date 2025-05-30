@@ -5,6 +5,7 @@ export type LayercodeMessageType =
   | 'trigger.turn.end'
   | 'trigger.response.audio.replay_finished'
   | 'vad_events'
+  | 'client.ready'
 
   // Server → Client WebSocket
   | 'turn.start' // Not currently implemented
@@ -37,6 +38,10 @@ export interface ClientTriggerTurnMessage extends BaseLayercodeMessage {
 export interface ClientVadEventsMessage extends BaseLayercodeMessage {
   type: 'vad_events';
   event: 'vad_start' | 'vad_end';
+}
+
+export interface ClientReadyMessage extends BaseLayercodeMessage {
+  type: 'client.ready';
 }
 
 export interface ClientTriggerResponseAudioReplayFinishedMessage extends BaseLayercodeMessage {
@@ -88,7 +93,7 @@ export interface ServerResponseDataMessage extends BaseLayercodeMessage {
 
 export type ServerMessage = ServerTurnMessage | ServerResponseAudioMessage | ServerResponseDataMessage;
 
-export type ClientMessage = ClientAudioMessage | ClientTriggerTurnMessage | ClientTriggerResponseAudioReplayFinishedMessage | ClientVadEventsMessage;
+export type ClientMessage = ClientAudioMessage | ClientTriggerTurnMessage | ClientTriggerResponseAudioReplayFinishedMessage | ClientVadEventsMessage | ClientReadyMessage;
 
 // Union type for all possible messages
 export type LayercodeMessage = ClientMessage | ServerMessage;
