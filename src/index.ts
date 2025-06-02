@@ -47,6 +47,8 @@ interface LayercodeClientOptions {
   onAgentAmplitudeChange?: (amplitude: number) => void;
   /** Callback when connection status changes */
   onStatusChange?: (status: string) => void;
+  /** Callback when user turn changes */
+  onUserIsSpeakingChange?: (isSpeaking: boolean) => void;
 }
 
 /**
@@ -92,6 +94,7 @@ class LayercodeClient {
       onUserAmplitudeChange: options.onUserAmplitudeChange || (() => {}),
       onAgentAmplitudeChange: options.onAgentAmplitudeChange || (() => {}),
       onStatusChange: options.onStatusChange || (() => {}),
+      onUserIsSpeakingChange: options.onUserIsSpeakingChange || (() => {}),
     };
 
     this.AMPLITUDE_MONITORING_SAMPLE_RATE = 10;
@@ -134,6 +137,7 @@ class LayercodeClient {
       console.log('silero vad model timeout');
       // TODO: send message to server to indicate that the vad model timed out
       this.userIsSpeaking = true; // allow audio to be sent to the server
+      this.options.onUserIsSpeakingChange(true);
     }, 2000);
     if (!this.canInterrupt) {
       MicVAD.new({
@@ -147,10 +151,12 @@ class LayercodeClient {
         onSpeechStart: () => {
           if (!this.wavPlayer.isPlaying) {
             this.userIsSpeaking = true;
+            this.options.onUserIsSpeakingChange(true);
           }
         },
         onVADMisfire: () => {
           this.userIsSpeaking = false;
+          this.options.onUserIsSpeakingChange(false);
         },
         onSpeechEnd: () => {
           this.endUserTurn = true; // Set flag to indicate that the user turn has ended, so we can send a vad_end event to the server
@@ -186,6 +192,7 @@ class LayercodeClient {
             console.log('onSpeechStart: WavPlayer is not playing, VAD will not pause.');
           }
           this.userIsSpeaking = true;
+          this.options.onUserIsSpeakingChange(true);
           console.log('onSpeechStart: sending vad_start');
           this._wsSend({
             type: 'vad_events',
@@ -195,6 +202,7 @@ class LayercodeClient {
         onVADMisfire: () => {
           // If the speech detected was for less than minSpeechFrames, this is called instead of onSpeechEnd, and we should resume the assistant audio as it was a false interruption. We include a configurable delay so the assistant isn't too quick to start speaking again.
           this.userIsSpeaking = false;
+          this.options.onUserIsSpeakingChange(false);
           if (this.vadPausedPlayer) {
             console.log('onSpeechEnd: VAD paused the player, resuming');
             this.wavPlayer.play();
@@ -204,11 +212,7 @@ class LayercodeClient {
           }
         },
         onSpeechEnd: () => {
-          this.userIsSpeaking = false;
-          this._wsSend({
-            type: 'vad_events',
-            event: 'vad_end',
-          } as ClientVadEventsMessage);
+          this.endUserTurn = true; // Set flag to indicate that the user turn has ended, so we can send a vad_end event to the server
         },
       })
         .then((vad) => {
@@ -342,6 +346,7 @@ class LayercodeClient {
         if (this.endUserTurn) {
           this.endUserTurn = false;
           this.userIsSpeaking = false; // Reset userIsSpeaking to false so we don't send any more audio to the server
+          this.options.onUserIsSpeakingChange(false);
           this._wsSend({
             type: 'vad_events',
             event: 'vad_end',
