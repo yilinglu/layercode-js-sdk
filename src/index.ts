@@ -507,6 +507,24 @@ class LayercodeClient {
   getStream(): MediaStream | null {
     return this.wavRecorder.getStream();
   }
+
+  /**
+   * Switches the input device for the microphone and restarts recording
+   * @param {string} deviceId - The deviceId of the new microphone
+   */
+  async setInputDevice(deviceId: string): Promise<void> {
+    if (this.wavRecorder) {
+      try {
+        await this.wavRecorder.end();
+      } catch (e) {}
+      try {
+        await this.wavRecorder.quit();
+      } catch (e) {}
+    }
+    await this.wavRecorder.begin(deviceId);
+    await this.wavRecorder.record(this._handleDataAvailable, 1638);
+    this._setupAmplitudeMonitoring(this.wavRecorder, this.options.onUserAmplitudeChange, (amp) => (this.userAudioAmplitude = amp));
+  }
 }
 
 export default LayercodeClient;
