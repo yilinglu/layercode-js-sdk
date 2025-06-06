@@ -256,7 +256,7 @@ export class WavStreamPlayer {
       this.analyser.disconnect();
     }
 
-    if (this.context) {
+    if (this.context && this.context.state !== 'closed') {
       this.context.close().catch((err) => console.error("Error closing audio context:", err));
     }
     

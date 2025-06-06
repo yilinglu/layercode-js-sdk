@@ -20,6 +20,22 @@ interface PipelineConfig {
 }
 
 /**
+ * Interface for LayercodeClient public methods
+ */
+interface ILayercodeClient {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  triggerUserTurnStarted(): Promise<void>;
+  triggerUserTurnFinished(): Promise<void>;
+  getStream(): MediaStream | null;
+  setInputDevice(deviceId: string): Promise<void>;
+  readonly status: string;
+  readonly userAudioAmplitude: number;
+  readonly agentAudioAmplitude: number;
+  readonly sessionId: string | null;
+}
+
+/**
  * Interface for LayercodeClient constructor options
  */
 interface LayercodeClientOptions {
@@ -55,7 +71,7 @@ interface LayercodeClientOptions {
  * @class LayercodeClient
  * @classdesc Core client for Layercode audio pipeline that manages audio recording, WebSocket communication, and speech processing.
  */
-class LayercodeClient {
+class LayercodeClient implements ILayercodeClient {
   private options: Required<LayercodeClientOptions>;
   private wavRecorder: WavRecorder;
   private wavPlayer: WavStreamPlayer;
@@ -495,9 +511,22 @@ class LayercodeClient {
   }
 
   async disconnect(): Promise<void> {
+    // Clean up VAD if it exists
+    if (this.vad) {
+      this.vad.pause();
+      this.vad.destroy();
+      this.vad = null;
+    }
+    
     this.wavRecorder.quit();
     this.wavPlayer.disconnect();
-    this.ws?.close();
+    
+    // Close websocket and ensure status is updated
+    if (this.ws) {
+      this.ws.close();
+      this._setStatus('disconnected');
+      this.options.onDisconnect();
+    }
   }
 
   /**
@@ -528,3 +557,4 @@ class LayercodeClient {
 }
 
 export default LayercodeClient;
+export type { ILayercodeClient, LayercodeClientOptions };
