@@ -4,6 +4,7 @@ export type LayercodeMessageType =
   | 'trigger.turn.start'
   | 'trigger.turn.end'
   | 'trigger.response.audio.replay_finished'
+  | 'trigger.response.audio.interrupted'
   | 'vad_events'
   | 'client.ready'
 
@@ -11,6 +12,7 @@ export type LayercodeMessageType =
   | 'turn.start' // Not currently implemented
   | 'turn.end' // Not currently implemented
   | 'response.audio'
+  | 'response.text' // Text content for interruption tracking
   | 'response.data'; // Webhook event forwarded by server to client
 
 // // Webhook → Server SSE
@@ -37,7 +39,7 @@ export interface ClientTriggerTurnMessage extends BaseLayercodeMessage {
 
 export interface ClientVadEventsMessage extends BaseLayercodeMessage {
   type: 'vad_events';
-  event: 'vad_start' | 'vad_end';
+  event: 'vad_start' | 'vad_end' | 'vad_model_failed';
 }
 
 export interface ClientReadyMessage extends BaseLayercodeMessage {
@@ -46,8 +48,17 @@ export interface ClientReadyMessage extends BaseLayercodeMessage {
 
 export interface ClientTriggerResponseAudioReplayFinishedMessage extends BaseLayercodeMessage {
   type: 'trigger.response.audio.replay_finished';
-  reason: 'completed' | 'interrupted';
+  reason: 'completed';
   last_delta_id_played?: string;
+}
+
+export interface ClientTriggerResponseAudioInterruptedMessage extends BaseLayercodeMessage {
+  type: 'trigger.response.audio.interrupted';
+  playback_offset?: number;
+  interruption_context?: {
+    turn_id: string;
+    playback_offset_ms: number;
+  };
 }
 
 // Layercode Server WebSocket Messages → Client Browser WebSocket Messages
@@ -61,6 +72,12 @@ export interface ServerResponseAudioMessage extends BaseLayercodeMessage {
   type: 'response.audio';
   content: string;
   delta_id?: string;
+  turn_id: string;
+}
+
+export interface ServerResponseTextMessage extends BaseLayercodeMessage {
+  type: 'response.text';
+  content: string;
   turn_id: string;
 }
 
@@ -91,9 +108,15 @@ export interface ServerResponseDataMessage extends BaseLayercodeMessage {
 // Create a discriminated union to differentiate between webhook and server messages
 // export type WebhookMessage = WebhookResponseTTSMessage | WebhookResponseDataMessage | ResponseEndMessage;
 
-export type ServerMessage = ServerTurnMessage | ServerResponseAudioMessage | ServerResponseDataMessage;
+export type ServerMessage = ServerTurnMessage | ServerResponseAudioMessage | ServerResponseTextMessage | ServerResponseDataMessage;
 
-export type ClientMessage = ClientAudioMessage | ClientTriggerTurnMessage | ClientTriggerResponseAudioReplayFinishedMessage | ClientVadEventsMessage | ClientReadyMessage;
+export type ClientMessage =
+  | ClientAudioMessage
+  | ClientTriggerTurnMessage
+  | ClientTriggerResponseAudioReplayFinishedMessage
+  | ClientTriggerResponseAudioInterruptedMessage
+  | ClientVadEventsMessage
+  | ClientReadyMessage;
 
 // Union type for all possible messages
 export type LayercodeMessage = ClientMessage | ServerMessage;
