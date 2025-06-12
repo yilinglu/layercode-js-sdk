@@ -164,7 +164,7 @@ class LayercodeClient implements ILayercodeClient {
             this.audioPauseTime = Date.now();
             this.wavPlayer.pause();
           }
-          
+
           isSpeakingByAmplitude = true;
           this.userIsSpeaking = true;
           this.options.onUserIsSpeakingChange(true);
@@ -263,10 +263,10 @@ class LayercodeClient implements ILayercodeClient {
         model: 'v5',
         // baseAssetPath: '/', // Use if bundling model locally
         // onnxWASMBasePath: '/', // Use if bundling model locally
-        positiveSpeechThreshold: 0.3,
-        negativeSpeechThreshold: 0.2,
+        positiveSpeechThreshold: 0.5,
+        negativeSpeechThreshold: 0.3,
         redemptionFrames: 25, // Number of frames of silence before onVADMisfire or onSpeechEnd is called. Effectively a delay before restarting.
-        minSpeechFrames: 5,
+        minSpeechFrames: 25,
         preSpeechPadFrames: 0,
         onSpeechStart: () => {
           // Only pause agent audio if it's currently playing
@@ -360,14 +360,14 @@ class LayercodeClient implements ILayercodeClient {
 
     if (offsetData && this.currentTurnId) {
       let offsetMs = offsetData.currentTime * 1000;
-      
+
       // Calculate accurate offset by subtracting pause time if audio was paused for VAD
       if (this.audioPauseTime) {
         const pauseDurationMs = Date.now() - this.audioPauseTime;
         const adjustedOffsetMs = Math.max(0, offsetMs - pauseDurationMs);
-        
+
         console.log(`Interruption detected: Raw offset ${offsetMs}ms, pause duration ${pauseDurationMs}ms, adjusted offset ${adjustedOffsetMs}ms for turn ${this.currentTurnId}`);
-        
+
         offsetMs = adjustedOffsetMs;
         this.audioPauseTime = null; // Clear the pause time
       } else {
