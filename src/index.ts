@@ -218,8 +218,8 @@ class LayercodeClient implements ILayercodeClient {
       MicVAD.new({
         stream: this.wavRecorder.getStream() || undefined,
         model: 'v5',
-        positiveSpeechThreshold: 0.3,
-        negativeSpeechThreshold: 0.2,
+        positiveSpeechThreshold: 0.7,
+        negativeSpeechThreshold: 0.55,
         redemptionFrames: 25, // Number of frames of silence before onVADMisfire or onSpeechEnd is called. Effectively a delay before restarting.
         minSpeechFrames: 0,
         preSpeechPadFrames: 0,
@@ -263,8 +263,8 @@ class LayercodeClient implements ILayercodeClient {
         model: 'v5',
         // baseAssetPath: '/', // Use if bundling model locally
         // onnxWASMBasePath: '/', // Use if bundling model locally
-        positiveSpeechThreshold: 0.5,
-        negativeSpeechThreshold: 0.3,
+        positiveSpeechThreshold: 0.7,
+        negativeSpeechThreshold: 0.55,
         redemptionFrames: 25, // Number of frames of silence before onVADMisfire or onSpeechEnd is called. Effectively a delay before restarting.
         minSpeechFrames: 25,
         preSpeechPadFrames: 0,
