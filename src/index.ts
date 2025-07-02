@@ -88,7 +88,7 @@ class LayercodeClient implements ILayercodeClient {
   private readySent: boolean; // Ensures we send client.ready only once
   private currentTurnId: string | null; // Track current turn ID
   private audioBuffer: string[]; // Buffer to catch audio just before VAD triggers
-  private audioPauseTime: number | null; // Track when audio was paused for VAD
+  // private audioPauseTime: number | null; // Track when audio was paused for VAD
   _websocketUrl: string;
   status: string;
   userAudioAmplitude: number;
@@ -139,7 +139,7 @@ class LayercodeClient implements ILayercodeClient {
     this.readySent = false;
     this.currentTurnId = null;
     this.audioBuffer = [];
-    this.audioPauseTime = null;
+    // this.audioPauseTime = null;
 
     // Bind event handlers
     this._handleWebSocketMessage = this._handleWebSocketMessage.bind(this);
@@ -159,12 +159,6 @@ class LayercodeClient implements ILayercodeClient {
       if (amplitude > AMPLITUDE_THRESHOLD) {
         silenceFrames = 0;
         if (!wasSpeaking) {
-          // Speech started - pause audio if playing and track timing for interruption calculation
-          if (this.canInterrupt && this.wavPlayer.isPlaying) {
-            this.audioPauseTime = Date.now();
-            this.wavPlayer.pause();
-          }
-
           isSpeakingByAmplitude = true;
           this.userIsSpeaking = true;
           this.options.onUserIsSpeakingChange(true);
@@ -176,7 +170,6 @@ class LayercodeClient implements ILayercodeClient {
       } else {
         silenceFrames++;
         if (wasSpeaking && silenceFrames >= SILENCE_FRAMES_THRESHOLD) {
-          // Speech ended
           isSpeakingByAmplitude = false;
           this.userIsSpeaking = false;
           this.options.onUserIsSpeakingChange(false);
@@ -261,22 +254,12 @@ class LayercodeClient implements ILayercodeClient {
       MicVAD.new({
         stream: this.wavRecorder.getStream() || undefined,
         model: 'v5',
-        // baseAssetPath: '/', // Use if bundling model locally
-        // onnxWASMBasePath: '/', // Use if bundling model locally
-        positiveSpeechThreshold: 0.7,
-        negativeSpeechThreshold: 0.55,
-        redemptionFrames: 25, // Number of frames of silence before onVADMisfire or onSpeechEnd is called. Effectively a delay before restarting.
-        minSpeechFrames: 25,
+        positiveSpeechThreshold: 0.15,
+        negativeSpeechThreshold: 0.05,
+        redemptionFrames: 4,
+        minSpeechFrames: 1,
         preSpeechPadFrames: 0,
         onSpeechStart: () => {
-          // Only pause agent audio if it's currently playing
-          if (this.wavPlayer.isPlaying) {
-            console.log('onSpeechStart: WavPlayer is playing, pausing it.');
-            this.audioPauseTime = Date.now(); // Track when we paused
-            this.wavPlayer.pause();
-          } else {
-            console.log('onSpeechStart: WavPlayer is not playing, VAD will not pause.');
-          }
           console.log('onSpeechStart: sending vad_start');
           this._wsSend({
             type: 'vad_events',
@@ -288,7 +271,6 @@ class LayercodeClient implements ILayercodeClient {
           console.log('onSpeechStart: State after update - endUserTurn:', this.endUserTurn, 'userIsSpeaking:', this.userIsSpeaking);
         },
         onVADMisfire: () => {
-          // If the speech detected was for less than minSpeechFrames, this is called instead of onSpeechEnd, and we should resume the assistant audio as it was a false interruption. We include a configurable delay so the assistant isn't too quick to start speaking again.
           this.userIsSpeaking = false;
           this.audioBuffer = []; // Clear buffer on misfire
           this.options.onUserIsSpeakingChange(false);
@@ -297,8 +279,6 @@ class LayercodeClient implements ILayercodeClient {
           setTimeout(() => {
             if (!this.wavPlayer.isPlaying) {
               console.log('onVADMisfire: Resuming after delay');
-              this.audioPauseTime = null; // Clear pause time since we're resuming
-              this.wavPlayer.play();
             } else {
               console.log('onVADMisfire: Not resuming - either no pause or user speaking again');
               this.endUserTurn = true;
@@ -311,14 +291,10 @@ class LayercodeClient implements ILayercodeClient {
           this.audioBuffer = []; // Clear buffer on speech end
           this.userIsSpeaking = false;
           this.options.onUserIsSpeakingChange(false);
-          console.log('onSpeechEnd: State after update - endUserTurn:', this.endUserTurn, 'userIsSpeaking:', this.userIsSpeaking);
-
-          // Send vad_end immediately instead of waiting for next audio chunk
           this._wsSend({
             type: 'vad_events',
             event: 'vad_end',
           } as ClientVadEventsMessage);
-          this.endUserTurn = false; // Reset the flag after sending vad_end
         },
       })
         .then((vad) => {
@@ -336,7 +312,6 @@ class LayercodeClient implements ILayercodeClient {
   /**
    * Updates the connection status and triggers the callback
    * @param {string} status - New status value
-   * @private
    */
   private _setStatus(status: string): void {
     this.status = status;
@@ -345,7 +320,6 @@ class LayercodeClient implements ILayercodeClient {
 
   /**
    * Handles when agent audio finishes playing
-   * @private
    */
   private _clientResponseAudioReplayFinished(): void {
     console.log('clientResponseAudioReplayFinished');
@@ -360,19 +334,6 @@ class LayercodeClient implements ILayercodeClient {
 
     if (offsetData && this.currentTurnId) {
       let offsetMs = offsetData.currentTime * 1000;
-
-      // Calculate accurate offset by subtracting pause time if audio was paused for VAD
-      if (this.audioPauseTime) {
-        const pauseDurationMs = Date.now() - this.audioPauseTime;
-        const adjustedOffsetMs = Math.max(0, offsetMs - pauseDurationMs);
-
-        console.log(`Interruption detected: Raw offset ${offsetMs}ms, pause duration ${pauseDurationMs}ms, adjusted offset ${adjustedOffsetMs}ms for turn ${this.currentTurnId}`);
-
-        offsetMs = adjustedOffsetMs;
-        this.audioPauseTime = null; // Clear the pause time
-      } else {
-        console.log(`Interruption detected: ${offsetMs}ms offset for turn ${this.currentTurnId} (no pause adjustment needed)`);
-      }
 
       // Send interruption event with accurate playback offset in milliseconds
       this._wsSend({
@@ -409,7 +370,6 @@ class LayercodeClient implements ILayercodeClient {
   /**
    * Handles incoming WebSocket messages
    * @param {MessageEvent} event - The WebSocket message event
-   * @private
    */
   private async _handleWebSocketMessage(event: MessageEvent): Promise<void> {
     try {
@@ -425,11 +385,9 @@ class LayercodeClient implements ILayercodeClient {
           console.log(message);
           if (message.role === 'assistant') {
             // Start tracking new assistant turn
-            // Note: Don't reset currentTurnId here - let response.audio set it
-            // This prevents race conditions where text arrives before audio
             console.log('Assistant turn started, will track new turn ID from audio/text');
-          } else if (message.role === 'user' && !this.pushToTalkEnabled && this.canInterrupt) {
-            // Interrupt any playing assistant audio if this is a turn trigged by the server (and not push to talk, which will have already called interrupt)
+          } else if (message.role === 'user' && !this.pushToTalkEnabled) {
+            // Interrupt any playing assistant audio if this is a turn triggered by the server (and not push to talk, which will have already called interrupt)
             console.log('interrupting assistant audio, as user turn has started and pushToTalkEnabled is false');
             await this._clientInterruptAssistantReplay();
           }
@@ -455,7 +413,6 @@ class LayercodeClient implements ILayercodeClient {
             this.currentTurnId = message.turn_id;
             console.log(`Setting current turn ID to: ${message.turn_id} from text message`);
           }
-          // Note: We no longer track text content in the client - the pipeline handles interruption estimation
           break;
         }
         case 'response.data':
@@ -475,7 +432,6 @@ class LayercodeClient implements ILayercodeClient {
   /**
    * Handles available client browser microphone audio data and sends it over the WebSocket
    * @param {ArrayBuffer} data - The audio data buffer
-   * @private
    */
   private _handleDataAvailable(data: { mono: Int16Array<ArrayBufferLike> }): void {
     try {
@@ -539,7 +495,6 @@ class LayercodeClient implements ILayercodeClient {
    * @param {WavRecorder | WavStreamPlayer} source - The audio source (recorder or player).
    * @param {(amplitude: number) => void} callback - The callback function to invoke on amplitude change.
    * @param {(amplitude: number) => void} updateInternalState - Function to update the internal amplitude state.
-   * @private
    */
   private _setupAmplitudeMonitoring(source: WavRecorder | WavStreamPlayer, callback: (amplitude: number) => void, updateInternalState: (amplitude: number) => void): void {
     // Set up amplitude monitoring only if a callback is provided
