@@ -83,7 +83,6 @@ class LayercodeClient implements ILayercodeClient {
   private pushToTalkEnabled: boolean;
   private canInterrupt: boolean;
   private userIsSpeaking: boolean;
-  private endUserTurn: boolean;
   private recorderStarted: boolean; // Indicates that WavRecorder.record() has been called successfully
   private readySent: boolean; // Ensures we send client.ready only once
   private currentTurnId: string | null; // Track current turn ID
@@ -134,7 +133,6 @@ class LayercodeClient implements ILayercodeClient {
     this.pushToTalkEnabled = false;
     this.canInterrupt = false;
     this.userIsSpeaking = false;
-    this.endUserTurn = false;
     this.recorderStarted = false;
     this.readySent = false;
     this.currentTurnId = null;
@@ -150,7 +148,7 @@ class LayercodeClient implements ILayercodeClient {
     let isSpeakingByAmplitude = false;
     let silenceFrames = 0;
     const AMPLITUDE_THRESHOLD = 0.01; // Adjust based on testing
-    const SILENCE_FRAMES_THRESHOLD = 30; // ~600ms at 20ms chunks
+    const SILENCE_FRAMES_THRESHOLD = 6.4; // 6.4 * 20ms chunks = 128ms silence. Same as Silero ((frame samples: 512 / sampleRate: 16000) * 1000 * redemptionFrames: 4) = 128 ms silence
 
     // Monitor amplitude changes
     this.wavRecorder.startAmplitudeMonitoring((amplitude: number) => {
@@ -190,7 +188,7 @@ class LayercodeClient implements ILayercodeClient {
       return;
     }
 
-    const timeout = setTimeout(() => {
+    const vadLoadTimeout = setTimeout(() => {
       console.log('silero vad model timeout');
       console.warn('VAD model failed to load - falling back to amplitude-based detection');
 
@@ -200,113 +198,50 @@ class LayercodeClient implements ILayercodeClient {
         event: 'vad_model_failed',
       } as ClientVadEventsMessage);
 
-      // In automatic mode without VAD, allow the bot to speak initially
-      this.userIsSpeaking = false;
-      this.options.onUserIsSpeakingChange(false);
-
       // Set up amplitude-based fallback detection
       this._setupAmplitudeBasedVAD();
     }, 2000);
-    if (!this.canInterrupt) {
-      MicVAD.new({
-        stream: this.wavRecorder.getStream() || undefined,
-        model: 'v5',
-        positiveSpeechThreshold: 0.7,
-        negativeSpeechThreshold: 0.55,
-        redemptionFrames: 25, // Number of frames of silence before onVADMisfire or onSpeechEnd is called. Effectively a delay before restarting.
-        minSpeechFrames: 0,
-        preSpeechPadFrames: 0,
-        onSpeechStart: () => {
-          this.userIsSpeaking = true;
-          this.options.onUserIsSpeakingChange(true);
-          console.log('onSpeechStart: sending vad_start');
-          this._wsSend({
-            type: 'vad_events',
-            event: 'vad_start',
-          } as ClientVadEventsMessage);
-        },
-        onSpeechEnd: () => {
-          console.log('onSpeechEnd: sending vad_end');
-          this.endUserTurn = true; // Set flag to indicate that the user turn has ended
-          this.audioBuffer = []; // Clear buffer on speech end
-          this.userIsSpeaking = false;
-          this.options.onUserIsSpeakingChange(false);
-          console.log('onSpeechEnd: State after update - endUserTurn:', this.endUserTurn, 'userIsSpeaking:', this.userIsSpeaking);
-
-          // Send vad_end immediately instead of waiting for next audio chunk
-          this._wsSend({
-            type: 'vad_events',
-            event: 'vad_end',
-          } as ClientVadEventsMessage);
-          this.endUserTurn = false; // Reset the flag after sending vad_end
-        },
+    MicVAD.new({
+      stream: this.wavRecorder.getStream() || undefined,
+      model: 'v5',
+      positiveSpeechThreshold: 0.15,
+      negativeSpeechThreshold: 0.05,
+      redemptionFrames: 4,
+      minSpeechFrames: 2,
+      preSpeechPadFrames: 0,
+      frameSamples: 512, // Required for v5 as per https://docs.vad.ricky0123.com/user-guide/algorithm/#configuration
+      onSpeechStart: () => {
+        console.log('onSpeechStart: sending vad_start');
+        this.userIsSpeaking = true;
+        this.options.onUserIsSpeakingChange(true);
+        this._wsSend({
+          type: 'vad_events',
+          event: 'vad_start',
+        } as ClientVadEventsMessage);
+      },
+      onSpeechEnd: () => {
+        console.log('onSpeechEnd: sending vad_end');
+        this.userIsSpeaking = false;
+        this.options.onUserIsSpeakingChange(false);
+        this.audioBuffer = []; // Clear buffer on speech end
+        this._wsSend({
+          type: 'vad_events',
+          event: 'vad_end',
+        } as ClientVadEventsMessage);
+      },
+      // onVADMisfire: () => {
+      //   // If the speech detected was for less than minSpeechFrames, this is called instead of onSpeechEnd.
+      // },
+    })
+      .then((vad) => {
+        clearTimeout(vadLoadTimeout);
+        this.vad = vad;
+        this.vad.start();
+        console.log('VAD started');
       })
-        .then((vad) => {
-          clearTimeout(timeout);
-          this.vad = vad;
-          this.vad.start();
-          console.log('VAD started');
-        })
-        .catch((error) => {
-          console.error('Error initializing VAD:', error);
-        });
-    } else {
-      MicVAD.new({
-        stream: this.wavRecorder.getStream() || undefined,
-        model: 'v5',
-        positiveSpeechThreshold: 0.15,
-        negativeSpeechThreshold: 0.05,
-        redemptionFrames: 4,
-        minSpeechFrames: 1,
-        preSpeechPadFrames: 0,
-        onSpeechStart: () => {
-          console.log('onSpeechStart: sending vad_start');
-          this._wsSend({
-            type: 'vad_events',
-            event: 'vad_start',
-          } as ClientVadEventsMessage);
-          this.userIsSpeaking = true;
-          this.options.onUserIsSpeakingChange(true);
-          this.endUserTurn = false; // Reset endUserTurn when speech starts
-          console.log('onSpeechStart: State after update - endUserTurn:', this.endUserTurn, 'userIsSpeaking:', this.userIsSpeaking);
-        },
-        onVADMisfire: () => {
-          this.userIsSpeaking = false;
-          this.audioBuffer = []; // Clear buffer on misfire
-          this.options.onUserIsSpeakingChange(false);
-
-          // Add the missing delay before resuming to prevent race conditions
-          setTimeout(() => {
-            if (!this.wavPlayer.isPlaying) {
-              console.log('onVADMisfire: Resuming after delay');
-            } else {
-              console.log('onVADMisfire: Not resuming - either no pause or user speaking again');
-              this.endUserTurn = true;
-            }
-          }, this.options.vadResumeDelay);
-        },
-        onSpeechEnd: () => {
-          console.log('onSpeechEnd: sending vad_end');
-          this.endUserTurn = true; // Set flag to indicate that the user turn has ended
-          this.audioBuffer = []; // Clear buffer on speech end
-          this.userIsSpeaking = false;
-          this.options.onUserIsSpeakingChange(false);
-          this._wsSend({
-            type: 'vad_events',
-            event: 'vad_end',
-          } as ClientVadEventsMessage);
-        },
-      })
-        .then((vad) => {
-          clearTimeout(timeout);
-          this.vad = vad;
-          this.vad.start();
-          console.log('VAD started');
-        })
-        .catch((error) => {
-          console.error('Error initializing VAD:', error);
-        });
-    }
+      .catch((error) => {
+        console.error('Error initializing VAD:', error);
+      });
   }
 
   /**
