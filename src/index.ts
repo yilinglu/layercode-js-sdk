@@ -30,6 +30,9 @@ interface ILayercodeClient {
   triggerUserTurnFinished(): Promise<void>;
   getStream(): MediaStream | null;
   setInputDevice(deviceId: string): Promise<void>;
+  // Add getFrequencies methods
+  getUserFrequencies(analysisType?: 'frequency' | 'music' | 'voice', minDecibels?: number, maxDecibels?: number): import('./wavtools/lib/analysis/audio_analysis.js').AudioAnalysisOutputType;
+  getAgentFrequencies(analysisType?: 'frequency' | 'music' | 'voice', minDecibels?: number, maxDecibels?: number): import('./wavtools/lib/analysis/audio_analysis.js').AudioAnalysisOutputType;
   readonly status: string;
   readonly userAudioAmplitude: number;
   readonly agentAudioAmplitude: number;
@@ -594,6 +597,36 @@ class LayercodeClient implements ILayercodeClient {
     await this.wavRecorder.begin(deviceId);
     await this.wavRecorder.record(this._handleDataAvailable, 1638);
     this._setupAmplitudeMonitoring(this.wavRecorder, this.options.onUserAmplitudeChange, (amp) => (this.userAudioAmplitude = amp));
+  }
+
+  /**
+   * Gets the current frequency domain data from the user's microphone
+   * @param {"frequency"|"music"|"voice"} [analysisType] - Type of frequency analysis
+   * @param {number} [minDecibels] - Minimum decibel threshold (default -100)
+   * @param {number} [maxDecibels] - Maximum decibel threshold (default -30)
+   * @returns {import('./wavtools/lib/analysis/audio_analysis.js').AudioAnalysisOutputType} Frequency analysis data
+   */
+  getUserFrequencies(analysisType?: 'frequency' | 'music' | 'voice', minDecibels?: number, maxDecibels?: number): import('./wavtools/lib/analysis/audio_analysis.js').AudioAnalysisOutputType {
+    return this.wavRecorder.getFrequencies(
+      analysisType || 'frequency', 
+      minDecibels ?? -100, 
+      maxDecibels ?? -30
+    );
+  }
+
+  /**
+   * Gets the current frequency domain data from the agent's audio playback
+   * @param {"frequency"|"music"|"voice"} [analysisType] - Type of frequency analysis
+   * @param {number} [minDecibels] - Minimum decibel threshold (default -100)
+   * @param {number} [maxDecibels] - Maximum decibel threshold (default -30)
+   * @returns {import('./wavtools/lib/analysis/audio_analysis.js').AudioAnalysisOutputType} Frequency analysis data
+   */
+  getAgentFrequencies(analysisType?: 'frequency' | 'music' | 'voice', minDecibels?: number, maxDecibels?: number): import('./wavtools/lib/analysis/audio_analysis.js').AudioAnalysisOutputType {
+    return this.wavPlayer.getFrequencies(
+      analysisType || 'frequency', 
+      minDecibels ?? -100, 
+      maxDecibels ?? -30
+    );
   }
 }
 
