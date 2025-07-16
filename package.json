@@ -2,7 +2,7 @@
   "author": "dragon0",
   "license": "MIT",
   "name": "@dragon0/layercode-js-sdk",
-  "version": "2.0.0-fork.1",
+  "version": "2.0.0-fork.2",
   "description": "Layercode JavaScript SDK for browser usage (Dragon0 Fork with getFrequencies exposure)",
   "type": "module",
   "main": "dist/layercode-js-sdk.esm.js",
