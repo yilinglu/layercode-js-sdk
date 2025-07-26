@@ -24,7 +24,9 @@
     "dev": "rollup -c -w",
     "clean": "rimraf dist",
     "prebuild": "npm run clean",
-    "copy-to-core": "cp dist/layercode-js-sdk.esm.js* ../layercode/core/public/static/js/"
+    "copy-to-core": "cp dist/layercode-js-sdk.esm.js* ../layercode/core/public/static/js/",
+    "test": "jest",
+    "test:watch": "jest --watch"
   },
   "keywords": [
     "layercode",
@@ -39,13 +41,30 @@
     "@rollup/plugin-commonjs": "^25.0.0",
     "@rollup/plugin-node-resolve": "^15.0.0",
     "@rollup/plugin-typescript": "^11.0.0",
+    "@types/jest": "^29.5.0",
+    "jest": "^29.5.0",
+    "jest-environment-jsdom": "^29.5.0",
     "rimraf": "^6.0.1",
     "rollup": "^4.0.0",
+    "ts-jest": "^29.1.0",
     "tslib": "^2.5.0",
     "typescript": "^5.8.2"
   },
   "dependencies": {
     "@ricky0123/vad-web": "^0.0.24",
     "onnxruntime-web": "^1.21.1"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "jsdom",
+    "moduleNameMapper": {
+      "\\.(js)$": "<rootDir>/src/$1"
+    },
+    "transform": {
+      "^.+\\.tsx?$": "ts-jest"
+    },
+    "testMatch": [
+      "<rootDir>/src/**/*.test.ts"
+    ]
   }
 }
